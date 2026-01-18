@@ -183,7 +183,6 @@
 
   <body>
     <h2>Pass Card Viewer/Editor</h2>
-    <input type="file" id="fileInput" />
 
     <div class="controls">
       <input
@@ -307,9 +306,7 @@
       ];
 
       // wire file input and control buttons
-      document
-        .getElementById("fileInput")
-        .addEventListener("change", loadExcel);
+      
       document
         .getElementById("updateTonnageBtn")
         .addEventListener("click", updateTonnage);
@@ -321,7 +318,7 @@
         .addEventListener("click", clearAllData);
 
       init();
-
+loadExcelFromRepo(); 
       function init() {
         if (loadState()) {
           renderStandControls();
@@ -474,108 +471,96 @@
       }
 
       function loadExcel(e) {
-        const file = e.target.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-          const wb = XLSX.read(new Uint8Array(ev.target.result), {
-            type: "array",
-          });
-          const sheet = wb.Sheets[wb.SheetNames[0]];
-          const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+       async function loadExcelFromRepo() {
+  const fileUrl = "RollPass.xlsx?t=" + new Date().getTime(); // avoid caching
+  try {
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error("Failed to fetch Excel file");
 
-          // Detect meta row at the top (Updated Date / Shift / Billet No or legacy Updated UpTo)
-          if (
-            raw.length &&
-            (raw[0]["Updated Date"] ||
-              raw[0]["Shift"] ||
-              raw[0]["Billet No"] ||
-              raw[0]["Updated UpTo"] ||
-              String(raw[0]["Stand Status"] || "").toLowerCase() === "meta")
-          ) {
-            let dateVal = raw[0]["Updated Date"] || "";
-            let shiftVal = raw[0]["Shift"] || "";
-            let billetVal = raw[0]["Billet No"] || "";
-            if (!dateVal && raw[0]["Updated UpTo"]) {
-              const parts = String(raw[0]["Updated UpTo"]).split("-");
-              if (parts.length >= 4) {
-                dateVal = parts.slice(0, 3).join("-");
-                shiftVal = parts[3] || "";
-                billetVal = parts[4] || "";
-              }
-            }
-            setMetaInputs(dateVal, shiftVal, billetVal);
-            raw.shift();
-          } else {
-            // try to parse from filename Roll_Pass_YYYY-MM-DD-X-NNN
-            const m = (file.name || "").match(
-              /(\d{4}-\d{2}-\d{2}-[A-Za-z0-9]-\d{3})/,
-            );
-            if (m && m[1]) {
-              const parts = m[1].split("-");
-              setMetaInputs(
-                parts.slice(0, 3).join("-"),
-                parts[3] || "",
-                parts[4] || "",
-              );
-            }
-          }
+    const arrayBuffer = await response.arrayBuffer();
+    const wb = XLSX.read(new Uint8Array(arrayBuffer), { type: "array" });
+    const sheet = wb.Sheets[wb.SheetNames[0]];
+    const raw = XLSX.utils.sheet_to_json(sheet, { defval: "" });
 
-          // Simple normalization: expect groove/status/ton rows grouped by Stand
-          const groups = {};
-          const order = [];
-          raw.forEach((r) => {
-            const stand = String(r["Stand"] || r["Stand Number"] || "").trim();
-            if (!stand) return;
-            if (!groups[stand]) {
-              groups[stand] = {};
-              order.push(stand);
-            }
-            const ss = String(r["Stand Status"] || "").toLowerCase();
-            if (ss === "groove profile") {
-              groups[stand].groove = r;
-            } else {
-              let hasNum = false;
-              for (let p = 1; p <= 20; p++) {
-                const v = r["P" + p];
-                if (
-                  (typeof v === "number" && !isNaN(v)) ||
-                  (String(v || "").trim() !== "" &&
-                    !isNaN(Number(String(v).toString().replace(/,/g, ""))))
-                ) {
-                  hasNum = true;
-                  break;
-                }
-              }
-              if (ss === "active" || hasNum || ss.includes("tonn"))
-                groups[stand].ton = r;
-              else groups[stand].status = r;
-            }
-          });
-          const normalized = [];
-          order.forEach((st) => {
-            const e = groups[st];
-            const statusRow = e.status || {};
-            const tonRow = e.ton || {};
-            statusRow["Stand"] = statusRow["Stand"] || tonRow["Stand"] || st;
-            tonRow["Stand"] = tonRow["Stand"] || statusRow["Stand"] || st;
-            if (e.groove) {
-              for (let p = 1; p <= 20; p++)
-                statusRow["GP" + p] = String(e.groove["P" + p] || "");
-            }
-            statusRow["Stand Status"] = statusRow["Stand Status"] || "";
-            normalized.push(statusRow);
-            normalized.push(tonRow);
-          });
-          if (normalized.length > 0) {
-            rows = normalized;
-          }
-          renderStandControls();
-          render();
-        };
-        reader.readAsArrayBuffer(file);
-        saveState();
+    // --- META row detection ---
+    if (
+      raw.length &&
+      (raw[0]["Updated Date"] ||
+        raw[0]["Shift"] ||
+        raw[0]["Billet No"] ||
+        raw[0]["Updated UpTo"] ||
+        String(raw[0]["Stand Status"] || "").toLowerCase() === "meta")
+    ) {
+      let dateVal = raw[0]["Updated Date"] || "";
+      let shiftVal = raw[0]["Shift"] || "";
+      let billetVal = raw[0]["Billet No"] || "";
+      if (!dateVal && raw[0]["Updated UpTo"]) {
+        const parts = String(raw[0]["Updated UpTo"]).split("-");
+        if (parts.length >= 4) {
+          dateVal = parts.slice(0, 3).join("-");
+          shiftVal = parts[3] || "";
+          billetVal = parts[4] || "";
+        }
       }
+      setMetaInputs(dateVal, shiftVal, billetVal);
+      raw.shift();
+    }
+
+    // --- Normalization (same as your original loadExcel) ---
+    const groups = {};
+    const order = [];
+    raw.forEach((r) => {
+      const stand = String(r["Stand"] || r["Stand Number"] || "").trim();
+      if (!stand) return;
+      if (!groups[stand]) {
+        groups[stand] = {};
+        order.push(stand);
+      }
+      const ss = String(r["Stand Status"] || "").toLowerCase();
+      if (ss === "groove profile") groups[stand].groove = r;
+      else {
+        let hasNum = false;
+        for (let p = 1; p <= 20; p++) {
+          const v = r["P" + p];
+          if (
+            (typeof v === "number" && !isNaN(v)) ||
+            (String(v || "").trim() !== "" &&
+              !isNaN(Number(String(v).toString().replace(/,/g, ""))))
+          ) {
+            hasNum = true;
+            break;
+          }
+        }
+        if (ss === "active" || hasNum || ss.includes("tonn")) groups[stand].ton = r;
+        else groups[stand].status = r;
+      }
+    });
+
+    const normalized = [];
+    order.forEach((st) => {
+      const e = groups[st];
+      const statusRow = e.status || {};
+      const tonRow = e.ton || {};
+      statusRow["Stand"] = statusRow["Stand"] || tonRow["Stand"] || st;
+      tonRow["Stand"] = tonRow["Stand"] || statusRow["Stand"] || st;
+      if (e.groove) {
+        for (let p = 1; p <= 20; p++) statusRow["GP" + p] = String(e.groove["P" + p] || "");
+      }
+      statusRow["Stand Status"] = statusRow["Stand Status"] || "";
+      normalized.push(statusRow);
+      normalized.push(tonRow);
+    });
+
+    if (normalized.length > 0) rows = normalized;
+
+    renderStandControls();
+    render();
+    saveState();
+  } catch (err) {
+    console.error(err);
+    alert("Failed to load RollPass.xlsx from repository");
+  }
+}
 
       function exportExcel() {
         const newRows = [];
